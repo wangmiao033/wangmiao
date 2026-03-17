@@ -9,6 +9,7 @@ export type SyncState = {
 }
 
 export async function pullPlannerState(user: SessionUser): Promise<{ ok: true; state: AppState | null; remoteUpdatedAt: string | null } | { ok: false; message: string }> {
+  if (!supabase) return { ok: false, message: '云端未配置：缺少 Supabase 环境变量。' }
   const { data, error } = await supabase
     .from('planner_states')
     .select('state, updated_at')
@@ -21,6 +22,7 @@ export async function pullPlannerState(user: SessionUser): Promise<{ ok: true; s
 }
 
 export async function pushPlannerState(user: SessionUser, state: AppState): Promise<{ ok: true; remoteUpdatedAt: string | null } | { ok: false; message: string }> {
+  if (!supabase) return { ok: false, message: '云端未配置：缺少 Supabase 环境变量。' }
   const { data, error } = await supabase
     .from('planner_states')
     .upsert({ user_id: user.id, version: state.version ?? 1, state }, { onConflict: 'user_id' })

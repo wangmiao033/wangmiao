@@ -1,4 +1,4 @@
-import { supabase, type SessionUser } from './supabase'
+import { supabase, supabaseEnabled, type SessionUser } from './supabase'
 
 type AdminUi = {
   root: HTMLDivElement
@@ -76,6 +76,12 @@ export function createAdminUi(opts: { getUser: () => SessionUser | null; isAdmin
     const note = el('div', { class: 'wm-hint' }, ['仅管理员可见。'])
     body.append(note, el('div', { class: 'wm-empty' }, ['加载中…']))
 
+    if (!supabase || !supabaseEnabled) {
+      body.innerHTML = ''
+      body.append(note, el('div', { class: 'wm-empty' }, ['云端未配置：缺少 Supabase 环境变量。']))
+      return
+    }
+
     const { data, error } = await supabase
       .from('profiles')
       .select('id, created_at, display_name, role, city')
@@ -107,6 +113,12 @@ export function createAdminUi(opts: { getUser: () => SessionUser | null; isAdmin
   async function renderStats(): Promise<void> {
     body.innerHTML = ''
     body.append(el('div', { class: 'wm-empty' }, ['加载中…']))
+
+    if (!supabase || !supabaseEnabled) {
+      body.innerHTML = ''
+      body.append(el('div', { class: 'wm-empty' }, ['云端未配置：缺少 Supabase 环境变量。']))
+      return
+    }
 
     // 简化：过去 7 天的事件数 & 去重用户数（近似 DAU）
     const since = new Date(Date.now() - 7 * 86400000).toISOString()
@@ -149,6 +161,12 @@ export function createAdminUi(opts: { getUser: () => SessionUser | null; isAdmin
       return
     }
     body.append(el('div', { class: 'wm-empty' }, ['加载中…']))
+
+    if (!supabase || !supabaseEnabled) {
+      body.innerHTML = ''
+      body.append(el('div', { class: 'wm-empty' }, ['云端未配置：缺少 Supabase 环境变量。']))
+      return
+    }
 
     const { data, error } = await supabase
       .from('planner_states')
