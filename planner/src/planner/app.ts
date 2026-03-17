@@ -1,7 +1,11 @@
 import type { AppState, DayTask, ISODate, UiTheme, YearlyTemplateTask } from './types'
-import { clamp, daysInMonth, mmddFromISO, pad2, startOfMonth, todayISO } from './date'
+import { clamp, daysInMonth, mmddFromISO, pad2, parseISODate, startOfMonth, todayISO } from './date'
 import { projectMenstrual, recordPeriodStart, removePeriodStart } from './menstrual'
 import { clearState, loadState, saveState } from './storage'
+import { createAuthUi } from './auth'
+import { getSessionUser, isAdminEmail, onAuthChange, type SessionUser } from './supabase'
+import { createSyncController, type SyncState } from './sync'
+import { createAdminUi } from './admin'
 
 type ViewMonth = { year: number; month1: number } // month1: 1-12
 
@@ -99,8 +103,9 @@ export function mountApp(root: HTMLDivElement): void {
   const btnNext = el('button', { class: 'wm-btn', type: 'button' }, ['下月 ›'])
   const monthLabel = el('div', { class: 'wm-month' }, [fmtMonthLabel(view)])
 
+  const btnAccount = el('button', { class: 'wm-btn', type: 'button' }, ['账号'])
   const btnSettings = el('button', { class: 'wm-btn wm-btn-primary', type: 'button' }, ['设置'])
-  nav.append(btnPrev, btnToday, btnNext, monthLabel, btnSettings)
+  nav.append(btnPrev, btnToday, btnNext, monthLabel, btnAccount, btnSettings)
   header.append(title, nav)
 
   const main = el('main', { class: 'wm-main' })
@@ -119,7 +124,8 @@ export function mountApp(root: HTMLDivElement): void {
   const detailHeader = el('div', { class: 'wm-panel-header wm-detail-header' })
   const detailTitle = el('div', { class: 'wm-panel-title' }, [''])
   const detailBadges = el('div', { class: 'wm-badges' })
-  detailHeader.append(detailTitle, detailBadges)
+  const btnTodayCard = el('button', { class: 'wm-btn wm-btn-small', type: 'button' }, ['🌤 今日状态'])
+  detailHeader.append(detailTitle, detailBadges, btnTodayCard)
 
   const templateBox = el('div', { class: 'wm-template-box' })
   const templateTitle = el('div', { class: 'wm-subtitle' }, ['年度模板（每年这一天自动出现）'])
@@ -186,6 +192,15 @@ export function mountApp(root: HTMLDivElement): void {
   const msHistoryList = el('div', { class: 'wm-setting-list' })
   secMenstrual.append(msHistoryTitle, msHistoryForm, msHistoryList)
 
+  const secCloud = el('section', { class: 'wm-setting-sec' })
+  secCloud.append(el('h3', { class: 'wm-h3' }, ['云同步（Supabase）']))
+  const cloudRow = el('div', { class: 'wm-row wm-row-wrap' })
+  const cloudStatus = el('div', { class: 'wm-hint' }, ['未登录：云同步未启用。'])
+  const btnPull = el('button', { class: 'wm-btn', type: 'button' }, ['立即拉取'])
+  const btnPush = el('button', { class: 'wm-btn wm-btn-primary', type: 'button' }, ['立即上传'])
+  cloudRow.append(btnPull, btnPush)
+  secCloud.append(cloudStatus, cloudRow)
+
   const secData = el('section', { class: 'wm-setting-sec' })
   secData.append(el('h3', { class: 'wm-h3' }, ['数据导入/导出（可跨设备备份）']))
   const dataRow = el('div', { class: 'wm-row wm-row-wrap' })
@@ -205,13 +220,165 @@ export function mountApp(root: HTMLDivElement): void {
   decorRow.append(stickersLabel)
   secTheme.append(themeGrid, decorRow, el('div', { class: 'wm-hint' }, ['提示：皮肤/贴纸只影响外观，不影响你的日程数据。']))
 
-  settingBody.append(secTheme, secTemplates, secMenstrual, secData)
+  settingBody.append(secTheme, secTemplates, secMenstrual, secCloud, secData)
   settings.append(settingBody)
 
-  root.append(header, main, settings)
+  const todayOverlay = el('div', { class: 'wm-overlay', 'data-visible': '0' })
+  const todayPopup = el('div', { class: 'wm-popup' })
+  const todayTitle = el('div', { class: 'wm-popup-title' }, ['🌸 今日状态'])
+  const todayDate = el('div', { class: 'wm-popup-date' }, [''])
+  const todayBlocks = el('div', { class: 'wm-popup-blocks' })
+  const btnCloseToday = el('button', { class: 'wm-popup-btn', type: 'button' }, ['知道啦'])
+  todayPopup.append(todayTitle, todayDate, todayBlocks, btnCloseToday)
+  todayOverlay.append(todayPopup)
+
+  const authUi = createAuthUi()
+  const adminUi = createAdminUi({ getUser: () => sessionUser, isAdmin: () => !!sessionUser && isAdminEmail(sessionUser.email) })
+  root.append(header, main, settings, todayOverlay, authUi.root, adminUi.root)
+
+  let sessionUser: SessionUser | null = null
+  let syncState: SyncState = { remoteUpdatedAt: null, pulling: false, pushing: false, lastError: null }
 
   function persist(): void {
     saveState(state)
+    syncCtl.schedulePush()
+  }
+
+  function weekCN(d: Date): string {
+    const w = d.getDay()
+    const map = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    return map[w] ?? ''
+  }
+
+  function setTodayVisible(v: boolean): void {
+    todayOverlay.dataset.visible = v ? '1' : '0'
+  }
+
+  function updateAccountButton(): void {
+    if (sessionUser) {
+      const adminTag = isAdminEmail(sessionUser.email) ? '（后台）' : ''
+      btnAccount.textContent = `账号${adminTag}`
+      btnAccount.classList.add('wm-btn-primary')
+    } else {
+      btnAccount.textContent = '账号'
+      btnAccount.classList.remove('wm-btn-primary')
+    }
+    authUi.render(sessionUser)
+  }
+
+  const syncCtl = createSyncController({
+    getUser: () => sessionUser,
+    getLocalState: () => state,
+    setLocalState: (next) => {
+      state = next
+    },
+    persistLocal: () => saveState(state),
+    onSyncState: (s) => {
+      syncState = s
+    },
+  })
+
+  function diffDays(a: ISODate, b: ISODate): number | null {
+    const da = parseISODate(a)
+    const db = parseISODate(b)
+    if (!da || !db) return null
+    const ms = db.getTime() - da.getTime()
+    return Math.floor(ms / 86400000)
+  }
+
+  function dayInCycle(today: ISODate): number | null {
+    const last = projectMenstrual(state.menstrual, today, today).lastRecordedStart
+    if (!last) return null
+    const d = diffDays(last, today)
+    if (d === null || d < 0) return null
+    const cycle = clamp(Math.round(state.menstrual.cycleLengthDays || 28), 15, 60)
+    return (d % cycle) + 1
+  }
+
+  function statusFromFeelsLike(c: number | undefined): { feel: string; outing: string; outfit: string } {
+    if (typeof c !== 'number' || Number.isNaN(c)) {
+      return { feel: '未知', outing: '看情况', outfit: '舒适为主：薄外套 + 方便穿脱' }
+    }
+    if (c >= 30) return { feel: '偏热', outing: '适合外出（注意防晒）', outfit: '轻薄短袖 + 防晒外套 / 遮阳帽' }
+    if (c >= 24) return { feel: '微热', outing: '适合外出', outfit: '短袖 + 防晒外套' }
+    if (c >= 18) return { feel: '舒适', outing: '适合外出', outfit: '长袖/薄针织 + 轻外套' }
+    if (c >= 10) return { feel: '偏凉', outing: '外出注意保暖', outfit: '卫衣/针织 + 风衣/薄羽绒' }
+    return { feel: '偏冷', outing: '减少受凉', outfit: '厚外套 + 围巾/帽子' }
+  }
+
+  function menstrualTips(today: ISODate): { phase: string; mood: string; remind: string } {
+    const proj = projectMenstrual(state.menstrual, today, today)
+    if (!state.menstrual.enabled || !proj.lastRecordedStart) {
+      return {
+        phase: '未开启/未记录',
+        mood: '保持松弛感',
+        remind: '先在经期里标记一次“来潮第一天”，之后就能更准地给你提示。',
+      }
+    }
+    const d = dayInCycle(today)
+    const dText = d ? `第${d}天` : '周期中'
+
+    if (proj.periodDays.has(today)) {
+      return { phase: `${dText}（经期）`, mood: '更容易疲惫/敏感，允许自己慢一点', remind: '保暖 + 少咖啡因；腰腹别着凉。' }
+    }
+    if (proj.ovulationDays.has(today)) {
+      return { phase: `${dText}（排卵日·估）`, mood: '精力可能更好，社交/运动更顺', remind: '补充蛋白质与水分；注意作息。' }
+    }
+    if (proj.fertileDays.has(today)) {
+      return { phase: `${dText}（易孕期·估）`, mood: '情绪可能更敏感，注意边界感', remind: '多喝水、少熬夜；安排轻量运动。' }
+    }
+    return { phase: `${dText}（黄体期/日常）`, mood: '容易想吃甜食或波动，别苛责自己', remind: '规律饮食 + 提前放松；睡前少刷屏。' }
+  }
+
+  function renderTodayCard(): void {
+    const today = todayISO()
+    const city = state.uiDailyPopup?.city || '广州'
+    const feelsLike = state.uiDailyPopup?.feelsLikeC
+    const w = statusFromFeelsLike(feelsLike)
+    const proj = projectMenstrual(state.menstrual, today, today)
+    const cycleDay = dayInCycle(today)
+    const phase =
+      !state.menstrual.enabled || !proj.lastRecordedStart
+        ? '未开启/未记录'
+        : proj.periodDays.has(today)
+          ? '经期'
+          : proj.ovulationDays.has(today)
+            ? '排卵期'
+            : proj.fertileDays.has(today)
+              ? '易孕期'
+              : '黄体期/日常'
+
+    const mood = menstrualTips(today).mood
+    const tips = menstrualTips(today).remind
+
+    const dt = parseISODate(today)
+    todayDate.textContent = dt ? `${today} ${weekCN(dt)}` : today
+
+    todayBlocks.innerHTML = ''
+    todayBlocks.append(
+      el('div', { class: 'wm-popup-block' }, [
+        el('strong', {}, ['📍 ', city, ' · 体感：', w.feel, typeof feelsLike === 'number' ? `（${Math.round(feelsLike)}℃）` : '']),
+      ]),
+      el('div', { class: 'wm-popup-block' }, [el('strong', {}, ['☁ 今日状态：']), w.outing]),
+      el('div', { class: 'wm-popup-block' }, [
+        el('strong', {}, ['周期：']),
+        cycleDay ? `第${cycleDay}天（${phase}）` : `（${phase}）`,
+      ]),
+      el('div', { class: 'wm-popup-block' }, ['👗 穿搭建议：', w.outfit]),
+      el('div', { class: 'wm-popup-block' }, ['💗 情绪提示：', mood]),
+      el('div', { class: 'wm-popup-block' }, ['💡 今日提醒：', tips]),
+    )
+  }
+
+  function maybeAutoShowToday(): void {
+    const today = todayISO()
+    state.uiDailyPopup ??= { enabled: true }
+    if (!state.uiDailyPopup.enabled) return
+    if (state.uiDailyPopup.lastShownISO === today) return
+    renderTodayCard()
+    setTodayVisible(true)
+    state.uiDailyPopup.lastShownISO = today
+    persist()
   }
 
   function applyTheme(theme: UiTheme): void {
@@ -311,6 +478,23 @@ export function mountApp(root: HTMLDivElement): void {
         row.append(left, right)
         msHistoryList.append(row)
       }
+    }
+
+    // cloud sync status
+    if (!sessionUser) {
+      cloudStatus.textContent = '未登录：云同步未启用。'
+      btnPull.disabled = true
+      btnPush.disabled = true
+    } else {
+      const parts: string[] = []
+      if (syncState.pulling) parts.push('拉取中…')
+      if (syncState.pushing) parts.push('上传中…')
+      if (!syncState.pulling && !syncState.pushing) parts.push('空闲')
+      if (syncState.remoteUpdatedAt) parts.push(`云端更新时间：${syncState.remoteUpdatedAt}`)
+      if (syncState.lastError) parts.push(`错误：${syncState.lastError}`)
+      cloudStatus.textContent = `已登录：${sessionUser.email}｜${parts.join('｜')}`
+      btnPull.disabled = false
+      btnPush.disabled = false
     }
   }
 
@@ -508,6 +692,24 @@ export function mountApp(root: HTMLDivElement): void {
     if (!settings.open) settings.showModal()
   })
 
+  btnPull.addEventListener('click', () => {
+    void syncCtl.pullNow().then(() => renderSettings())
+  })
+  btnPush.addEventListener('click', () => {
+    void syncCtl.flushPush().then(() => renderSettings())
+  })
+
+  btnAccount.addEventListener('click', () => {
+    authUi.open()
+  })
+
+  // admin entry: 点击“账号（后台）”时进入后台
+  btnAccount.addEventListener('contextmenu', (e) => {
+    // 右键作为隐藏入口，避免普通用户误点；管理员也会在按钮文字看到“后台”
+    e.preventDefault()
+    if (sessionUser && isAdminEmail(sessionUser.email)) adminUi.open()
+  })
+
   stickersToggle.addEventListener('change', () => {
     state.uiDecor ??= { stickers: true }
     state.uiDecor.stickers = stickersToggle.checked
@@ -519,6 +721,11 @@ export function mountApp(root: HTMLDivElement): void {
     const t = e.target as HTMLElement
     if (t instanceof HTMLButtonElement && t.dataset.close) settings.close()
   })
+
+  todayOverlay.addEventListener('click', (e) => {
+    if (e.target === todayOverlay) setTodayVisible(false)
+  })
+  btnCloseToday.addEventListener('click', () => setTodayVisible(false))
 
   btnAddTask.addEventListener('click', addTaskFromInput)
   taskInput.addEventListener('keydown', (e) => {
@@ -609,6 +816,26 @@ export function mountApp(root: HTMLDivElement): void {
   if (!selected) selected = todayISO()
   // 首次进入同步一次 theme-color
   applyTheme((state.uiTheme ?? 'sakura') as UiTheme)
+  applyDecor()
   renderAll()
+  // 首次加载自动弹一次“今日状态”
+  maybeAutoShowToday()
+
+  btnTodayCard.addEventListener('click', () => {
+    renderTodayCard()
+    setTodayVisible(true)
+  })
+
+  // auth init
+  void getSessionUser().then((u) => {
+    sessionUser = u
+    updateAccountButton()
+    if (sessionUser) void syncCtl.pullNow()
+  })
+  onAuthChange((u) => {
+    sessionUser = u
+    updateAccountButton()
+    if (sessionUser) void syncCtl.pullNow()
+  })
 }
 

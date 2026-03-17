@@ -42,3 +42,32 @@ npm run preview
 默认不联网、不上传；所有数据存在当前浏览器本地存储。  
 如果你后续希望多端同步，我可以在不改变 UI 的前提下接入：WebDAV / iCloud/OneDrive 文件同步 / 自建后端。
 
+## 云端账号与后台（Supabase）
+
+本项目支持接入 Supabase（免费额度可起步），实现：
+- 注册/登录
+- 多设备云同步
+- 管理后台（用户列表/统计/内容管理）
+
+### 1) 建表与权限
+
+在 Supabase 控制台的 SQL Editor 执行：
+- `supabase/schema.sql`
+
+### 2) 配置前端环境变量
+
+复制 `.env.example` 为 `.env.local`，填入：
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+然后重新启动开发服务器。
+
+### 3) 部署（GitHub Pages）
+
+仓库已包含 GitHub Actions 工作流：`.github/workflows/deploy-pages.yml`，会在你 push 到 `main` 后自动构建并发布 `planner/dist`。
+
+你需要在 GitHub 仓库里做一次设置：
+- Settings → Pages → Build and deployment → Source 选择 **GitHub Actions**
+
+然后在仓库的 Actions 里等待 `Deploy planner to GitHub Pages` 完成即可。
+

@@ -10,7 +10,7 @@ self.addEventListener('install', (event) => {
     caches
       .open(CACHE)
       .then((cache) =>
-        cache.addAll(['/', '/manifest.webmanifest', '/favicon.svg']).catch(() => undefined),
+        cache.addAll(['./', './manifest.webmanifest', './favicon.svg']).catch(() => undefined),
       )
       .then(() => self.skipWaiting()),
   )

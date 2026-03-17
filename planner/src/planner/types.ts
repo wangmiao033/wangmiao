@@ -48,5 +48,14 @@ export type AppState = {
   uiDecor?: {
     stickers: boolean
   }
+  uiDailyPopup?: {
+    enabled: boolean
+    lastShownISO?: ISODate
+    city?: string
+    feelsLikeC?: number
+    lat?: number
+    lon?: number
+    lastWeatherAt?: number
+  }
 }
 

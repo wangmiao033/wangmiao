@@ -26,6 +26,7 @@ export function defaultState(): AppState {
     },
     uiTheme: 'sakura',
     uiDecor: { stickers: true },
+    uiDailyPopup: { enabled: true, city: '广州', feelsLikeC: 27 },
   }
 }
 
@@ -44,6 +45,15 @@ export function loadState(): AppState {
     parsed.uiTheme ??= 'sakura'
     parsed.uiDecor = {
       stickers: parsed.uiDecor?.stickers ?? def.uiDecor!.stickers,
+    }
+    parsed.uiDailyPopup = {
+      enabled: parsed.uiDailyPopup?.enabled ?? def.uiDailyPopup!.enabled,
+      lastShownISO: parsed.uiDailyPopup?.lastShownISO,
+      city: parsed.uiDailyPopup?.city ?? def.uiDailyPopup!.city,
+      feelsLikeC: parsed.uiDailyPopup?.feelsLikeC ?? def.uiDailyPopup!.feelsLikeC,
+      lat: parsed.uiDailyPopup?.lat,
+      lon: parsed.uiDailyPopup?.lon,
+      lastWeatherAt: parsed.uiDailyPopup?.lastWeatherAt,
     }
     return parsed
   } catch {

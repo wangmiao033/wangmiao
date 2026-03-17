@@ -1,14 +1,14 @@
 {
   "name": "个人日程",
   "short_name": "日程",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#fff7fb",
   "theme_color": "#fff7fb",
   "description": "日历 + 每日待办 + 年度模板 + 经期预测（离线本地）",
   "icons": [
     {
-      "src": "/favicon.svg",
+      "src": "./favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
